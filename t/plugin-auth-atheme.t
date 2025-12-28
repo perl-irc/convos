@@ -20,4 +20,14 @@ is($plugin->_parse_email_from_info(undef),
 # Test email resolution
 can_ok('Convos::Plugin::Auth::Atheme', '_resolve_email_p');
 
+# Test username normalization
+is($plugin->_normalize_username('  user  '), 'user', 'trims whitespace');
+is($plugin->_normalize_username('user@domain.com'), 'user', 'strips domain');
+is($plugin->_normalize_username(''), '', 'handles empty string');
+is($plugin->_normalize_username(undef), '', 'handles undef');
+
+# Test fault message
+is($plugin->_fault_message(5), 'Invalid username or password', 'maps fault code 5');
+is($plugin->_fault_message(999), 'Authentication service unavailable. Please try again later.', 'unknown code gets default');
+
 done_testing;
