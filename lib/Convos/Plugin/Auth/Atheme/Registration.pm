@@ -3,6 +3,7 @@
 package Convos::Plugin::Auth::Atheme::Registration;
 use Mojo::Base 'Convos::Plugin', -async_await;
 
+use Convos::Core::PendingRegistration;
 use Mojo::IOLoop;
 use Mojo::Promise;
 use Mojo::URL;
@@ -53,7 +54,79 @@ sub register {
 
 async sub _register_p {
   my ($self, $c, $params) = @_;
-  die 'Registration not yet implemented';
+
+  # Validate and normalize inputs
+  my $nick = $params->{username} // '';
+  $nick =~ s/^\s+|\s+$//g;  # trim whitespace
+  die 'Username is required' unless length $nick;
+
+  my $password = $params->{password} // '';
+  die 'Password is required' unless length $password;
+
+  my $email = $params->{email} // '';
+  die 'Email is required' unless length $email;
+  die 'Email address is invalid' unless $email =~ /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  # Connect to IRC as the desired nick
+  my $irc;
+  eval {
+    $irc = await $self->_ephemeral_irc_p($nick);
+  } or do {
+    my $err = $@;
+    if ($err =~ /nick already in use/i) {
+      die 'Nickname is already in use. Try a different nickname.';
+    }
+    die "Failed to connect to IRC: $err";
+  };
+
+  # Send NickServ REGISTER command
+  my $response;
+  eval {
+    $response = await $self->_send_nickserv_p($irc, "REGISTER $password $email");
+  } or do {
+    my $err = $@;
+    die "Failed to communicate with NickServ: $err";
+  };
+
+  # Parse the response
+  my $result = $self->_parse_register_response($response);
+
+  # Handle error responses
+  if ($result->{status} eq 'nick_in_use') {
+    die 'Nickname is already registered. Use a different nickname or login with existing credentials.';
+  }
+  elsif ($result->{status} eq 'bad_email') {
+    die 'Email address is not allowed by the IRC server. Try a different email address.';
+  }
+  elsif ($result->{status} eq 'rate_limit') {
+    die 'Too many registration attempts. Please try again later.';
+  }
+  elsif ($result->{status} eq 'unknown') {
+    die "Registration failed: $result->{message}";
+  }
+  elsif ($result->{status} ne 'success') {
+    die "Unexpected registration response: $result->{message}";
+  }
+
+  # Create and save pending registration
+  my $core = $c->app->core;
+  my $session_id = $c->session->id;
+
+  my $pending = Convos::Core::PendingRegistration->new(
+    core       => $core,
+    session_id => $session_id,
+    nick       => $nick,
+    email      => $email,
+  );
+
+  await $pending->save_p;
+
+  # Return success with pending status
+  return {
+    status => 'pending_verification',
+    nick   => $nick,
+    email  => $email,
+  };
 }
 
 async sub _verify_p {

@@ -5,6 +5,42 @@ use Test::More;
 
 BEGIN { use_ok('Convos::Plugin::Auth::Atheme::Registration') };
 
+# Mock classes for testing
+package Test::MockCore {
+  use Mojo::Base -base;
+  has backend => sub { Test::MockBackend->new };
+}
+
+package Test::MockBackend {
+  use Mojo::Base -base;
+  use Mojo::Promise;
+  sub save_object_p { Mojo::Promise->new->resolve($_[1]) }
+}
+
+package Test::MockApp {
+  use Mojo::Base -base;
+  has core => sub { Test::MockCore->new };
+  has log => sub {
+    my $log = Mojo::Base->new;
+    $log->{debug} = sub { };
+    $log->{info} = sub { };
+    return $log;
+  };
+}
+
+package Test::MockSession {
+  use Mojo::Base -base;
+  sub id { 'test-session-123' }
+}
+
+package Test::MockController {
+  use Mojo::Base -base;
+  has 'app';
+  has session => sub { Test::MockSession->new };
+}
+
+package main;
+
 # Test plugin can be instantiated
 my $plugin = Convos::Plugin::Auth::Atheme::Registration->new;
 isa_ok($plugin, 'Convos::Plugin::Auth::Atheme::Registration');
@@ -98,6 +134,70 @@ subtest '_parse_verify_response' => sub {
   $result = $plugin->_parse_verify_response($response);
   is($result->{status}, 'unknown', 'unknown response returns unknown status');
   ok(exists $result->{message}, 'unknown response includes message');
+};
+
+# Test _register_p input validation
+subtest '_register_p input validation' => sub {
+  plan tests => 9;
+
+  # Mock controller and app
+  my $app = Test::MockApp->new;
+  my $c = Test::MockController->new(app => $app);
+
+  # Missing username
+  my $err;
+  $plugin->_register_p($c, {password => 'pass123', email => 'test@example.com'})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/username.*required/i, 'dies when username missing');
+
+  # Empty username
+  $err = undef;
+  $plugin->_register_p($c, {username => '', password => 'pass123', email => 'test@example.com'})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/username.*required/i, 'dies when username empty');
+
+  # Whitespace-only username
+  $err = undef;
+  $plugin->_register_p($c, {username => '   ', password => 'pass123', email => 'test@example.com'})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/username.*required/i, 'dies when username is whitespace');
+
+  # Missing password
+  $err = undef;
+  $plugin->_register_p($c, {username => 'testuser', email => 'test@example.com'})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/password.*required/i, 'dies when password missing');
+
+  # Empty password
+  $err = undef;
+  $plugin->_register_p($c, {username => 'testuser', password => '', email => 'test@example.com'})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/password.*required/i, 'dies when password empty');
+
+  # Missing email
+  $err = undef;
+  $plugin->_register_p($c, {username => 'testuser', password => 'pass123'})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/email.*required/i, 'dies when email missing');
+
+  # Empty email
+  $err = undef;
+  $plugin->_register_p($c, {username => 'testuser', password => 'pass123', email => ''})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/email.*required/i, 'dies when email empty');
+
+  # Invalid email format
+  $err = undef;
+  $plugin->_register_p($c, {username => 'testuser', password => 'pass123', email => 'notanemail'})
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/email.*invalid/i, 'dies when email format invalid');
+
+  # Valid inputs should fail on IRC connection (we're not testing that here)
+  $err = undef;
+  $plugin->_register_p($c, {username => 'testuser', password => 'pass123', email => 'test@example.com'})
+    ->catch(sub { $err = shift })->wait;
+  # Should get past validation and fail on IRC connection
+  ok($err !~ /required|invalid/i, 'valid inputs pass validation');
 };
 
 # Integration tests - require running IRC server
