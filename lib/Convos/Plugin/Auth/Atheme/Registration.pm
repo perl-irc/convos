@@ -12,6 +12,22 @@ has irc_url => sub { Mojo::URL->new($ENV{CONVOS_AUTH_ATHEME_IRC_URL} // 'irc://l
 has domain  => sub { $ENV{CONVOS_AUTH_ATHEME_DOMAIN} // 'example.net' };
 has timeout => sub { $ENV{CONVOS_AUTH_ATHEME_TIMEOUT} // 30 };
 
+# Response patterns for REGISTER command
+our %REGISTER_RESPONSES = (
+  success      => qr/An email containing nickname activation/i,
+  nick_in_use  => qr/is already registered/i,
+  bad_email    => qr/is not allowed|invalid email/i,
+  rate_limit   => qr/too many accounts|try again later/i,
+);
+
+# Response patterns for VERIFY command
+our %VERIFY_RESPONSES = (
+  success     => qr/has been verified|registration complete/i,
+  bad_code    => qr/invalid.*key|verification code.*incorrect/i,
+  expired     => qr/not awaiting|no registration pending/i,
+  nick_taken  => qr/already registered/i,
+);
+
 sub register {
   my ($self, $app, $config) = @_;
 
@@ -43,6 +59,32 @@ async sub _register_p {
 async sub _verify_p {
   my ($self, $c) = @_;
   die 'Verification not yet implemented';
+}
+
+sub _parse_register_response {
+  my ($self, $response) = @_;
+
+  for my $status (keys %REGISTER_RESPONSES) {
+    my $pattern = $REGISTER_RESPONSES{$status};
+    if ($response =~ $pattern) {
+      return {status => $status, message => $response};
+    }
+  }
+
+  return {status => 'unknown', message => $response};
+}
+
+sub _parse_verify_response {
+  my ($self, $response) = @_;
+
+  for my $status (keys %VERIFY_RESPONSES) {
+    my $pattern = $VERIFY_RESPONSES{$status};
+    if ($response =~ $pattern) {
+      return {status => $status, message => $response};
+    }
+  }
+
+  return {status => 'unknown', message => $response};
 }
 
 sub _ephemeral_irc_p {
@@ -261,6 +303,48 @@ environment variable or C<30>.
 Registers the plugin with the Convos application.
 
 =head1 INTERNAL METHODS
+
+=head2 _parse_register_response
+
+  $result = $plugin->_parse_register_response($response);
+
+Parses NickServ REGISTER command responses. Returns a hashref with C<status> and
+C<message> keys. Recognized status values:
+
+=over 4
+
+=item * success - Email with activation instructions sent
+
+=item * nick_in_use - Nickname already registered
+
+=item * bad_email - Email address not allowed or invalid
+
+=item * rate_limit - Too many registrations from host
+
+=item * unknown - Unrecognized response
+
+=back
+
+=head2 _parse_verify_response
+
+  $result = $plugin->_parse_verify_response($response);
+
+Parses NickServ VERIFY command responses. Returns a hashref with C<status> and
+C<message> keys. Recognized status values:
+
+=over 4
+
+=item * success - Account verified successfully
+
+=item * bad_code - Invalid verification key/code
+
+=item * expired - No pending registration or verification expired
+
+=item * nick_taken - Nickname already registered to another user
+
+=item * unknown - Unrecognized response
+
+=back
 
 =head2 _ephemeral_irc_p
 
