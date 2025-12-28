@@ -171,6 +171,26 @@ async sub _resolve_email_p {
   return $email // sprintf('%s@%s', $username, $self->domain);
 }
 
+async sub _user_initial_setup_p {
+  my ($self, $c, $user, $nick, $password) = @_;
+  my $core = $c->app->core;
+
+  # First user becomes admin
+  $user->role(give => 'admin') if $core->n_users == 1;
+
+  # Build IRC URL with SASL credentials
+  my $url = $self->irc_url->clone;
+  $url->userinfo("$nick:$password");
+  $url->query->merge(tls => 1, sasl => 'plain');
+
+  eval {
+    my $connection = await $user->connection_create_p($url);
+    $connection->connect_p->catch(sub { });  # Don't block on connect failure
+  };
+
+  return $user;
+}
+
 1;
 
 =encoding utf8
