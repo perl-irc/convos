@@ -97,9 +97,9 @@ async sub _login_p {
   return $user;
 }
 
-sub _register_p {
-  my ($self, $c, $args) = @_;
-  die 'Not implemented';
+async sub _register_p {
+  my ($self, $c, $params) = @_;
+  die 'Registration is handled by NickServ. Connect to IRC and use: /msg NickServ REGISTER <password> <email>';
 }
 
 sub _atheme_login_p {
