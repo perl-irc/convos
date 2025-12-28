@@ -94,6 +94,28 @@ sub _atheme_command_p {
   });
 }
 
+sub _parse_email_from_info {
+  my ($self, $info_output) = @_;
+  return undef unless $info_output;
+  return $1 if $info_output =~ /^Email\s*:\s*(\S+@\S+)/m;
+  return undef;
+}
+
+async sub _resolve_email_p {
+  my ($self, $authcookie, $username, $source_ip) = @_;
+
+  my $email;
+  eval {
+    my $info = await $self->_atheme_command_p(
+      $authcookie, $username, $source_ip, 'NickServ', 'INFO', $username
+    );
+    $email = $self->_parse_email_from_info($info);
+  };
+
+  # Fallback to nick@domain
+  return $email // sprintf('%s@%s', $username, $self->domain);
+}
+
 1;
 
 =encoding utf8
