@@ -1,8 +1,17 @@
 # ABOUTME: Convos authentication plugin that delegates auth to Atheme IRC Services via XMLRPC
 # ABOUTME: Provides login and registration through Atheme's NickServ service
+
+# Exception class for Atheme XMLRPC faults
+package Convos::Plugin::Auth::Atheme::Fault;
+use Mojo::Base -base;
+has ['code', 'message'];
+sub TO_JSON { {code => shift->code, message => shift->message} }
+use overload '""' => sub { my $s = shift; $s->message }, fallback => 1;
+
 package Convos::Plugin::Auth::Atheme;
 use Mojo::Base 'Convos::Plugin::Auth', -async_await;
 
+use Mojo::IOLoop;
 use Mojo::Promise;
 use Mojo::URL;
 
@@ -36,6 +45,53 @@ sub _login_p {
 sub _register_p {
   my ($self, $c, $args) = @_;
   die 'Not implemented';
+}
+
+sub _atheme_login_p {
+  my ($self, $username, $password, $source_ip) = @_;
+  $source_ip //= '';
+
+  return Mojo::IOLoop->subprocess->run_p(sub {
+    require RPC::XML::Client;
+    my $client = RPC::XML::Client->new($self->xmlrpc_url->to_string);
+    $client->useragent->timeout($self->timeout);
+
+    my $resp = $client->send_request('atheme.login', $username, $password, $source_ip);
+
+    if (ref $resp && $resp->is_fault) {
+      die Convos::Plugin::Auth::Atheme::Fault->new(
+        code => $resp->code,
+        message => $resp->string
+      );
+    }
+
+    return ref $resp ? $resp->value : $resp;
+  });
+}
+
+sub _atheme_command_p {
+  my ($self, $authcookie, $username, $source_ip, $service, $command, @args) = @_;
+  $source_ip //= '';
+
+  return Mojo::IOLoop->subprocess->run_p(sub {
+    require RPC::XML::Client;
+    my $client = RPC::XML::Client->new($self->xmlrpc_url->to_string);
+    $client->useragent->timeout($self->timeout);
+
+    my $resp = $client->send_request(
+      'atheme.command', $authcookie, $username, $source_ip,
+      $service, $command, @args
+    );
+
+    if (ref $resp && $resp->is_fault) {
+      die Convos::Plugin::Auth::Atheme::Fault->new(
+        code => $resp->code,
+        message => $resp->string
+      );
+    }
+
+    return ref $resp ? $resp->value : $resp;
+  });
 }
 
 1;
