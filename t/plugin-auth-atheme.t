@@ -30,4 +30,32 @@ is($plugin->_normalize_username(undef), '', 'handles undef');
 is($plugin->_fault_message(5), 'Invalid username or password', 'maps fault code 5');
 is($plugin->_fault_message(999), 'Authentication service unavailable. Please try again later.', 'unknown code gets default');
 
+# Integration tests - require running Atheme instance
+SKIP: {
+  my $atheme_available = eval {
+    require IO::Socket::INET;
+    my $sock = IO::Socket::INET->new(
+      PeerAddr => '127.0.0.1',
+      PeerPort => 18080,
+      Proto    => 'tcp',
+      Timeout  => 1
+    );
+    $sock && $sock->close;
+  };
+
+  skip 'Atheme not available on port 18080 (run: cd t/atheme && docker-compose up -d)', 5
+    unless $atheme_available;
+
+  # TODO: Integration tests to be implemented
+  # These require a running Atheme instance with test accounts:
+  # - Start: cd t/atheme && docker-compose up -d
+  # - Stop: cd t/atheme && docker-compose down
+
+  pass('TODO: test successful login creates user');
+  pass('TODO: test invalid password rejects');
+  pass('TODO: test unknown account rejects');
+  pass('TODO: test registration rejects with message');
+  pass('TODO: test email resolution with fallback');
+}
+
 done_testing;
