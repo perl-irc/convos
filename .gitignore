@@ -6,6 +6,7 @@
 .pls_cache/
 .vstags
 .worktrees/
+docs/plans/
 /blib/
 /cover_db
 /inc/
