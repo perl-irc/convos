@@ -1,0 +1,15 @@
+# ABOUTME: Docker Compose configuration for Atheme XMLRPC testing
+# ABOUTME: Start with 'docker-compose up -d', stop with 'docker-compose down'
+services:
+  atheme:
+    image: atheme/atheme:latest
+    ports:
+      - "18080:8080"
+    volumes:
+      - ./atheme.conf:/etc/atheme/atheme.conf:ro
+    command: ["atheme-services", "-n", "-c", "/etc/atheme/atheme.conf"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/xmlrpc"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
