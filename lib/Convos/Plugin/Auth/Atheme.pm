@@ -6,10 +6,10 @@ use Mojo::Base 'Convos::Plugin::Auth', -async_await;
 use Mojo::Promise;
 use Mojo::URL;
 
-has xmlrpc_url => sub { Mojo::URL->new($ENV{CONVOS_ATHEME_XMLRPC_URL} || 'http://localhost:8080/xmlrpc') };
-has domain     => sub { $ENV{CONVOS_ATHEME_DOMAIN} || 'example.net' };
-has irc_url    => sub { Mojo::URL->new($ENV{CONVOS_ATHEME_IRC_URL} || 'irc://localhost:6667') };
-has timeout    => sub { $ENV{CONVOS_ATHEME_TIMEOUT} || 30 };
+has xmlrpc_url => sub { Mojo::URL->new($ENV{CONVOS_AUTH_ATHEME_URL} || 'http://localhost:8080/xmlrpc') };
+has domain     => sub { $ENV{CONVOS_AUTH_ATHEME_DOMAIN} || 'example.net' };
+has irc_url    => sub { Mojo::URL->new($ENV{CONVOS_AUTH_ATHEME_IRC_URL} || 'irc://localhost:6667') };
+has timeout    => sub { $ENV{CONVOS_AUTH_ATHEME_TIMEOUT} || 30 };
 
 sub register {
   my ($self, $app, $config) = @_;
@@ -24,8 +24,8 @@ sub register {
   $app->helper('auth.login_p'    => sub { $self->_login_p(@_) });
   $app->helper('auth.register_p' => sub { $self->_register_p(@_) });
 
-  # Call parent to set up remaining helpers
-  $self->SUPER::register($app, $config);
+  # Log plugin load
+  $app->log->info("Loaded Convos::Plugin::Auth::Atheme " . $self->xmlrpc_url);
 }
 
 sub _login_p {
@@ -58,7 +58,7 @@ Atheme's NickServ service.
 
   $url = $plugin->xmlrpc_url;
 
-The URL for the Atheme XMLRPC endpoint. Defaults to the C<CONVOS_ATHEME_XMLRPC_URL>
+The URL for the Atheme XMLRPC endpoint. Defaults to the C<CONVOS_AUTH_ATHEME_URL>
 environment variable or C<http://localhost:8080/xmlrpc>.
 
 =head2 domain
@@ -66,20 +66,20 @@ environment variable or C<http://localhost:8080/xmlrpc>.
   $domain = $plugin->domain;
 
 The IRC domain to append to usernames for email addresses. Defaults to the
-C<CONVOS_ATHEME_DOMAIN> environment variable or C<example.net>.
+C<CONVOS_AUTH_ATHEME_DOMAIN> environment variable or C<example.net>.
 
 =head2 irc_url
 
   $url = $plugin->irc_url;
 
-The IRC server URL to connect users to. Defaults to the C<CONVOS_ATHEME_IRC_URL>
+The IRC server URL to connect users to. Defaults to the C<CONVOS_AUTH_ATHEME_IRC_URL>
 environment variable or C<irc://localhost:6667>.
 
 =head2 timeout
 
   $seconds = $plugin->timeout;
 
-Timeout in seconds for XMLRPC requests. Defaults to the C<CONVOS_ATHEME_TIMEOUT>
+Timeout in seconds for XMLRPC requests. Defaults to the C<CONVOS_AUTH_ATHEME_TIMEOUT>
 environment variable or C<30>.
 
 =head1 METHODS
