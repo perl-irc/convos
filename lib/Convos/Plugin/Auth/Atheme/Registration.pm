@@ -131,7 +131,95 @@ async sub _register_p {
 
 async sub _verify_p {
   my ($self, $c) = @_;
-  die 'Verification not yet implemented';
+
+  # Validate and normalize code
+  my $code = $c->req->json->{code} // '';
+  $code =~ s/^\s+|\s+$//g;  # trim whitespace
+  die 'Verification code is required' unless length $code;
+
+  # Get session ID
+  my $session_id = $c->session->id;
+  die 'No session found' unless $session_id;
+
+  # Load pending registration for this session
+  my $core = $c->app->core;
+  my $pending = Convos::Core::PendingRegistration->new(
+    core       => $core,
+    session_id => $session_id,
+    nick       => 'placeholder',  # Will be loaded
+    email      => 'placeholder@example.com',
+  );
+
+  # Try to load pending registration (will reject if not found or expired)
+  my $data;
+  eval {
+    $data = await $pending->load_p;
+  } or do {
+    my $err = $@;
+    if ($err =~ /expired/i) {
+      die 'Registration verification has expired. Please register again.';
+    }
+    die 'No pending registration found for this session.';
+  };
+
+  # Update pending object with loaded data
+  $pending->{nick} = $data->{nick};
+  $pending->{email} = $data->{email};
+
+  # Connect to IRC as the pending nick
+  my $irc;
+  eval {
+    $irc = await $self->_ephemeral_irc_p($pending->nick);
+  } or do {
+    my $err = $@;
+    if ($err =~ /nick already in use/i) {
+      die 'Nickname is no longer available. Registration cannot be completed.';
+    }
+    die "Failed to connect to IRC: $err";
+  };
+
+  # Send NickServ VERIFY command
+  my $response;
+  eval {
+    $response = await $self->_send_nickserv_p($irc, "VERIFY REGISTER " . $pending->nick . " $code");
+  } or do {
+    my $err = $@;
+    die "Failed to communicate with NickServ: $err";
+  };
+
+  # Parse the response
+  my $result = $self->_parse_verify_response($response);
+
+  # Handle error responses
+  if ($result->{status} eq 'bad_code') {
+    die 'Invalid verification code. Check your email and try again.';
+  }
+  elsif ($result->{status} eq 'expired') {
+    die 'Registration verification has expired. Please register again.';
+  }
+  elsif ($result->{status} eq 'nick_taken') {
+    die 'Nickname is already registered to another user.';
+  }
+  elsif ($result->{status} eq 'unknown') {
+    die "Verification failed: $result->{message}";
+  }
+  elsif ($result->{status} ne 'success') {
+    die "Unexpected verification response: $result->{message}";
+  }
+
+  # Success - cleanup pending registration
+  eval {
+    await $pending->delete_p;
+  } or do {
+    # Log but don't fail if cleanup fails
+    $c->app->log->warn("Failed to delete pending registration: $@");
+  };
+
+  # Return success
+  return {
+    status => 'verified',
+    nick   => $pending->nick,
+  };
 }
 
 sub _parse_register_response {

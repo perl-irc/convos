@@ -15,6 +15,10 @@ package Test::MockBackend {
   use Mojo::Base -base;
   use Mojo::Promise;
   sub save_object_p { Mojo::Promise->new->resolve($_[1]) }
+  sub load_object_p {
+    # Return empty hashref to trigger "not found" condition
+    Mojo::Promise->new->resolve({});
+  }
 }
 
 package Test::MockApp {
@@ -33,9 +37,15 @@ package Test::MockSession {
   sub id { 'test-session-123' }
 }
 
+package Test::MockReq {
+  use Mojo::Base -base;
+  has 'json';
+}
+
 package Test::MockController {
   use Mojo::Base -base;
   has 'app';
+  has 'req' => sub { Test::MockReq->new };
   has session => sub { Test::MockSession->new };
 }
 
@@ -198,6 +208,53 @@ subtest '_register_p input validation' => sub {
     ->catch(sub { $err = shift })->wait;
   # Should get past validation and fail on IRC connection
   ok($err !~ /required|invalid/i, 'valid inputs pass validation');
+};
+
+# Test _verify_p input validation
+subtest '_verify_p input validation' => sub {
+  plan tests => 3;
+
+  # Mock controller and app
+  my $app = Test::MockApp->new;
+  my $c = Test::MockController->new(app => $app);
+
+  # Missing code
+  my $err;
+  $c->req->json({});
+  $plugin->_verify_p($c)
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/verification code.*required/i, 'dies when code missing');
+
+  # Empty code
+  $err = undef;
+  $c->req->json({code => ''});
+  $plugin->_verify_p($c)
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/verification code.*required/i, 'dies when code empty');
+
+  # Whitespace-only code
+  $err = undef;
+  $c->req->json({code => '   '});
+  $plugin->_verify_p($c)
+    ->catch(sub { $err = shift })->wait;
+  like($err, qr/verification code.*required/i, 'dies when code is whitespace');
+};
+
+# Test _verify_p pending registration lookup
+subtest '_verify_p pending registration lookup' => sub {
+  plan tests => 1;
+
+  # Mock controller and app
+  my $app = Test::MockApp->new;
+  my $c = Test::MockController->new(app => $app);
+
+  # Valid code but no pending registration (will fail to load from backend)
+  my $err;
+  $c->req->json({code => 'ABC123'});
+  $plugin->_verify_p($c)
+    ->catch(sub { $err = shift })->wait;
+  # Should fail when trying to load pending registration
+  ok($err, 'dies when pending registration not found');
 };
 
 # Integration tests - require running IRC server
