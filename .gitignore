@@ -5,6 +5,7 @@
 *.swp
 .pls_cache/
 .vstags
+.worktrees/
 /blib/
 /cover_db
 /inc/
