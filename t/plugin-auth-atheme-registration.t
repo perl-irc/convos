@@ -21,15 +21,38 @@ package Test::MockBackend {
   }
 }
 
+package Test::MockRoutes {
+  use Mojo::Base -base;
+  sub post {
+    my ($self, $path) = @_;
+    return Test::MockRoute->new(path => $path);
+  }
+}
+
+package Test::MockRoute {
+  use Mojo::Base -base;
+  has 'path';
+  sub to { shift }
+}
+
+package Test::MockLog {
+  use Mojo::Base -base;
+  sub debug { shift }
+  sub info { shift }
+  sub warn { shift }
+  sub error { shift }
+}
+
 package Test::MockApp {
   use Mojo::Base -base;
   has core => sub { Test::MockCore->new };
-  has log => sub {
-    my $log = Mojo::Base->new;
-    $log->{debug} = sub { };
-    $log->{info} = sub { };
-    return $log;
-  };
+  has routes => sub { Test::MockRoutes->new };
+  has log => sub { Test::MockLog->new };
+  sub helper {
+    my ($self, $name, $code) = @_;
+    # Store helpers for verification
+    $self->{_helpers}{$name} = $code;
+  }
 }
 
 package Test::MockSession {
@@ -67,6 +90,81 @@ can_ok($plugin, '_send_nickserv_p');
 can_ok($plugin, '_register_p');
 can_ok($plugin, '_verify_p');
 can_ok($plugin, 'register');
+
+# Test plugin can be instantiated with custom config
+subtest 'plugin custom configuration' => sub {
+  my $custom_plugin = Convos::Plugin::Auth::Atheme::Registration->new;
+
+  # Create mock app for registration
+  my $app = Test::MockApp->new;
+
+  # Test configuration via register() method
+  my $config = {
+    irc_url => 'irc://custom.irc.net:6667',
+    domain  => 'custom.net',
+    timeout => 60,
+  };
+
+  $custom_plugin->register($app, $config);
+
+  is($custom_plugin->domain, 'custom.net', 'custom domain applied via config');
+  is($custom_plugin->timeout, 60, 'custom timeout applied via config');
+  isa_ok($custom_plugin->irc_url, 'Mojo::URL', 'custom irc_url is Mojo::URL');
+  is($custom_plugin->irc_url->host, 'custom.irc.net', 'custom irc host applied via config');
+  is($custom_plugin->irc_url->port, 6667, 'custom irc port applied via config');
+};
+
+# Test environment variables are read correctly
+subtest 'environment variable configuration' => sub {
+  # Save original env vars
+  my $orig_irc_url = $ENV{CONVOS_AUTH_ATHEME_IRC_URL};
+  my $orig_domain = $ENV{CONVOS_AUTH_ATHEME_DOMAIN};
+  my $orig_timeout = $ENV{CONVOS_AUTH_ATHEME_TIMEOUT};
+
+  # Set custom env vars
+  $ENV{CONVOS_AUTH_ATHEME_IRC_URL} = 'irc://env.irc.net:7000';
+  $ENV{CONVOS_AUTH_ATHEME_DOMAIN} = 'env.net';
+  $ENV{CONVOS_AUTH_ATHEME_TIMEOUT} = 45;
+
+  # Create new plugin to pick up env vars
+  my $env_plugin = Convos::Plugin::Auth::Atheme::Registration->new;
+
+  is($env_plugin->domain, 'env.net', 'CONVOS_AUTH_ATHEME_DOMAIN read correctly');
+  is($env_plugin->timeout, 45, 'CONVOS_AUTH_ATHEME_TIMEOUT read correctly');
+  isa_ok($env_plugin->irc_url, 'Mojo::URL', 'env irc_url is Mojo::URL');
+  is($env_plugin->irc_url->host, 'env.irc.net', 'CONVOS_AUTH_ATHEME_IRC_URL host read correctly');
+  is($env_plugin->irc_url->port, 7000, 'CONVOS_AUTH_ATHEME_IRC_URL port read correctly');
+
+  # Restore original env vars
+  if (defined $orig_irc_url) {
+    $ENV{CONVOS_AUTH_ATHEME_IRC_URL} = $orig_irc_url;
+  } else {
+    delete $ENV{CONVOS_AUTH_ATHEME_IRC_URL};
+  }
+  if (defined $orig_domain) {
+    $ENV{CONVOS_AUTH_ATHEME_DOMAIN} = $orig_domain;
+  } else {
+    delete $ENV{CONVOS_AUTH_ATHEME_DOMAIN};
+  }
+  if (defined $orig_timeout) {
+    $ENV{CONVOS_AUTH_ATHEME_TIMEOUT} = $orig_timeout;
+  } else {
+    delete $ENV{CONVOS_AUTH_ATHEME_TIMEOUT};
+  }
+};
+
+# Test register() method sets auth.register_p helper
+subtest 'register() method wiring' => sub {
+  my $test_plugin = Convos::Plugin::Auth::Atheme::Registration->new;
+  my $app = Test::MockApp->new;
+
+  # Register the plugin
+  $test_plugin->register($app, {});
+
+  # Verify helper was set
+  ok(exists $app->{_helpers}{'auth.register_p'}, 'auth.register_p helper was set');
+  ok(ref($app->{_helpers}{'auth.register_p'}) eq 'CODE', 'helper code is a coderef');
+};
 
 # Test _parse_register_response method
 subtest '_parse_register_response' => sub {
