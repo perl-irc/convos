@@ -357,16 +357,149 @@ subtest '_verify_p pending registration lookup' => sub {
 
 # Integration tests - require running IRC server
 SKIP: {
-  skip 'Set TEST_IRC=1 to run IRC integration tests', 5 unless $ENV{TEST_IRC};
+  skip 'Set TEST_IRC=1 to run IRC integration tests', 1 unless $ENV{TEST_IRC};
 
-  # These tests would require a running IRC server
-  # TODO: Add integration tests with Docker Atheme
+  # Check if IRC server is available
+  eval {
+    require IO::Socket::INET;
+    my $sock = IO::Socket::INET->new(
+      PeerAddr => '127.0.0.1',
+      PeerPort => 16667,
+      Proto    => 'tcp',
+      Timeout  => 2,
+    );
+    die "IRC server not available" unless $sock;
+    $sock->close;
+  };
 
-  pass('placeholder for IRC connection test');
-  pass('placeholder for nick-in-use test');
-  pass('placeholder for NickServ command test');
-  pass('placeholder for NickServ response test');
-  pass('placeholder for timeout test');
+  skip "IRC server not available at 127.0.0.1:16667 (start with: cd t/atheme && docker-compose up -d)", 1 if $@;
+
+  subtest 'full registration and verification flow' => sub {
+    plan tests => 14;
+
+    # Set up plugin with test IRC server
+    my $test_plugin = Convos::Plugin::Auth::Atheme::Registration->new(
+      irc_url => Mojo::URL->new('irc://127.0.0.1:16667'),
+      domain  => 'test.net',
+      timeout => 15,
+    );
+
+    my $app = Test::MockApp->new;
+    my $c = Test::MockController->new(app => $app);
+
+    # Generate unique test nick to avoid conflicts
+    my $test_nick = 'testuser' . time() . int(rand(1000));
+    my $test_email = $test_nick . '@example.com';
+    my $test_pass = 'testpass123';
+
+    # Test 1: Registration flow
+    my ($result, $err);
+    eval {
+      $result = $test_plugin->_register_p($c, {
+        username => $test_nick,
+        password => $test_pass,
+        email    => $test_email,
+      })->wait;
+    };
+    $err = $@;
+
+    ok(!$err, 'registration completes without error') or diag("Error: $err");
+    ok($result, 'registration returns result');
+    is($result->{status}, 'pending_verification', 'registration returns pending_verification status');
+    is($result->{nick}, $test_nick, 'registration returns correct nick');
+    is($result->{email}, $test_email, 'registration returns correct email');
+
+    # Test 2: Nick already in use (try to register same nick)
+    $err = undef;
+    eval {
+      $test_plugin->_register_p($c, {
+        username => $test_nick,
+        password => 'different_pass',
+        email    => 'different@example.com',
+      })->wait;
+    };
+    $err = $@;
+
+    ok($err, 'registering duplicate nick produces error');
+    like($err, qr/already registered|already in use/i, 'error message mentions nick is registered/in use');
+
+    # Test 3: Verification flow
+    # Note: In a real test, we'd get the verification code from email
+    # For now, we test that the verification command is sent correctly
+    # This will fail because we don't have the actual code, but it tests the flow
+
+    # Mock a pending registration for verification test
+    my $verify_nick = 'verifytest' . time() . int(rand(1000));
+
+    # Create a mock pending registration in backend
+    my $pending = Convos::Core::PendingRegistration->new(
+      core       => $app->core,
+      session_id => $c->session->id,
+      nick       => $verify_nick,
+      email      => $verify_nick . '@example.com',
+    );
+
+    # Save the pending registration
+    $pending->save_p->wait;
+
+    # Test verification with bad code
+    $err = undef;
+    $c->req->json({code => 'BADCODE123'});
+    eval {
+      $test_plugin->_verify_p($c)->wait;
+    };
+    $err = $@;
+
+    ok($err, 'verification with bad code produces error');
+    like($err, qr/invalid|incorrect|expired|not found/i, 'error message indicates verification problem');
+
+    # Test 4: Error cases
+
+    # Invalid email format
+    $err = undef;
+    my $bad_nick = 'badmail' . time();
+    eval {
+      $test_plugin->_register_p($c, {
+        username => $bad_nick,
+        password => 'pass123',
+        email    => 'not-an-email',
+      })->wait;
+    };
+    $err = $@;
+
+    ok($err, 'invalid email produces error');
+    like($err, qr/email.*invalid/i, 'error message mentions invalid email');
+
+    # Missing fields
+    $err = undef;
+    eval {
+      $test_plugin->_register_p($c, {
+        username => 'someuser',
+      })->wait;
+    };
+    $err = $@;
+
+    ok($err, 'missing password produces error');
+    like($err, qr/password.*required/i, 'error message mentions password required');
+
+    # Test 5: Connection and NickServ communication
+
+    # Test that we can connect and send a command
+    my $irc;
+    eval {
+      my $unique_nick = 'conntest' . time() . int(rand(1000));
+      $irc = $test_plugin->_ephemeral_irc_p($unique_nick)->wait;
+    };
+    $err = $@;
+
+    ok(!$err, 'can create ephemeral IRC connection') or diag("Connection error: $err");
+    ok($irc, 'ephemeral connection returns IRC object');
+
+    # Clean up: close the connection if it's still open
+    if ($irc && $irc->{stream}) {
+      eval { $irc->{stream}->close };
+    }
+  };
 }
 
 done_testing;
