@@ -7,6 +7,7 @@ use Convos::Util::S3 qw(sign_request);
 use Mojo::JSON qw(encode_json decode_json);
 use Mojo::UserAgent;
 use Mojo::URL;
+use Mojo::DOM;
 
 has s3_endpoint => sub { $ENV{CONVOS_S3_ENDPOINT} || 'https://fly.storage.tigris.dev' };
 has s3_bucket   => sub { $ENV{CONVOS_S3_BUCKET}   || die 'CONVOS_S3_BUCKET required' };
@@ -53,6 +54,102 @@ async sub delete_object_p {
   await $self->_s3_request_p('DELETE', $key);
 
   return $obj;
+}
+
+async sub users_p {
+  my $self = shift;
+
+  # List all user directories
+  my $result = await $self->_s3_list_p('users/', '/');
+
+  my @users;
+  for my $prefix (@{$result->{prefixes}}) {
+    # Each prefix is like "users/joe@example.com/"
+    # Load the user.json file for this user
+    my $key  = "${prefix}user.json";
+    my $res  = await $self->_s3_request_p('GET', $key);
+    next unless $res->is_success;
+
+    my $data = {};
+    eval { $data = decode_json($res->body); };
+    push @users, $data if $data && ref $data eq 'HASH';
+  }
+
+  # Sort users by registered date, then email (matching File backend behavior)
+  @users = sort {
+    ($a->{registered} || '') cmp ($b->{registered} || '')
+    || ($a->{email} || '') cmp ($b->{email} || '')
+  } @users;
+
+  return \@users;
+}
+
+async sub connections_p {
+  my ($self, $user) = @_;
+
+  # Get user directory path from user object
+  my $user_path = join '/', @{$user->uri};
+  my $prefix    = "users/${user_path}/";
+
+  # List all connection directories for this user
+  my $result = await $self->_s3_list_p($prefix, '/');
+
+  my @connections;
+  for my $conn_prefix (@{$result->{prefixes}}) {
+    # Each prefix is like "users/joe@example.com/irc-libera/"
+    # Load the connection.json file
+    my $key = "${conn_prefix}connection.json";
+    my $res = await $self->_s3_request_p('GET', $key);
+    next unless $res->is_success;
+
+    my $data = {};
+    eval { $data = decode_json($res->body); };
+    if ($data && ref $data eq 'HASH') {
+      delete $data->{state};    # should not be stored in connection.json
+      push @connections, $data;
+    }
+  }
+
+  return \@connections;
+}
+
+async sub _s3_list_p {
+  my ($self, $prefix, $delimiter) = @_;
+  $prefix    //= '';
+  $delimiter //= '';
+
+  # Build URL with query params for LIST operation
+  my $url = sprintf '%s/%s', $self->s3_endpoint, $self->s3_bucket;
+  my $query = Mojo::URL->new->query(prefix => $prefix, delimiter => $delimiter)->query->to_string;
+  $url .= "?$query" if $query;
+
+  # Generate AWS4 signature for GET request
+  my $headers = sign_request(
+    method  => 'GET',
+    url     => $url,
+    headers => {},
+    payload => '',
+    key     => $self->s3_key,
+    secret  => $self->s3_secret,
+    region  => $self->s3_region,
+  );
+
+  # Execute LIST request
+  my $tx  = await $self->ua->get_p($url => $headers);
+  my $res = $tx->res;
+
+  return {keys => [], prefixes => []} unless $res->is_success;
+
+  # Parse XML response
+  my $dom = Mojo::DOM->new($res->body);
+
+  # Extract object keys from <Contents><Key> elements
+  my @keys = $dom->find('Contents > Key')->map('text')->each;
+
+  # Extract directory prefixes from <CommonPrefixes><Prefix> elements
+  my @prefixes = $dom->find('CommonPrefixes > Prefix')->map('text')->each;
+
+  return {keys => \@keys, prefixes => \@prefixes};
 }
 
 sub _s3_key {
@@ -204,6 +301,22 @@ of object data, or an empty hashref if the object doesn't exist (404).
   $p = $backend->delete_object_p($obj);
 
 Deletes object from S3. Returns a promise that resolves to C<$obj>.
+
+=head2 users_p
+
+  $p = $backend->users_p;
+
+Lists all users by querying S3 for user directories, then loading each
+user.json file. Returns a promise that resolves to an arrayref of user
+data hashes, sorted by registration date and email.
+
+=head2 connections_p
+
+  $p = $backend->connections_p($user);
+
+Lists all connections for a user by querying S3 for connection directories
+within the user's path, then loading each connection.json file. Returns a
+promise that resolves to an arrayref of connection data hashes.
 
 =head1 SEE ALSO
 

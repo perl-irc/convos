@@ -164,4 +164,199 @@ subtest 'delete_object_p' => sub {
   is $MockUserAgent::REQUESTS[0]{method}, 'DELETE', 'used DELETE method';
 };
 
+# Test _s3_list_p
+subtest '_s3_list_p' => sub {
+  my $xml_response = <<'XML';
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <Contents>
+    <Key>users/joe@example.com/user.json</Key>
+  </Contents>
+  <Contents>
+    <Key>users/jane@example.com/user.json</Key>
+  </Contents>
+  <CommonPrefixes>
+    <Prefix>users/joe@example.com/</Prefix>
+  </CommonPrefixes>
+  <CommonPrefixes>
+    <Prefix>users/jane@example.com/</Prefix>
+  </CommonPrefixes>
+</ListBucketResult>
+XML
+
+  # Mock successful LIST request
+  $MockUserAgent::MOCK_RESPONSE = MockResponse->new(
+    code => 200,
+    body => $xml_response
+  );
+  @MockUserAgent::REQUESTS = ();
+
+  $backend->{ua} = MockUserAgent->new;
+
+  my $result;
+  $backend->_s3_list_p('users/', '/')->then(sub {
+    $result = shift;
+  })->$wait_success('_s3_list_p');
+
+  is scalar(@{$result->{keys}}), 2, 'found 2 keys';
+  is scalar(@{$result->{prefixes}}), 2, 'found 2 prefixes';
+  is $result->{keys}[0], 'users/joe@example.com/user.json', 'first key correct';
+  is $result->{prefixes}[0], 'users/joe@example.com/', 'first prefix correct';
+  like $MockUserAgent::REQUESTS[0]{url}, qr{\?prefix=users/&delimiter=/}, 'URL has query params';
+};
+
+# Test users_p
+subtest 'users_p' => sub {
+  # Mock LIST response showing two user directories
+  my $list_xml = <<'XML';
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <CommonPrefixes>
+    <Prefix>users/joe@example.com/</Prefix>
+  </CommonPrefixes>
+  <CommonPrefixes>
+    <Prefix>users/jane@example.com/</Prefix>
+  </CommonPrefixes>
+</ListBucketResult>
+XML
+
+  # Mock GET responses for each user.json file
+  my %user_data = (
+    'users/joe@example.com/user.json' => encode_json({
+      email => 'joe@example.com',
+      registered => '2023-01-01T00:00:00Z',
+    }),
+    'users/jane@example.com/user.json' => encode_json({
+      email => 'jane@example.com',
+      registered => '2023-01-02T00:00:00Z',
+    }),
+  );
+
+  # Create a more sophisticated mock that returns different responses
+  my $call_count = 0;
+  my $mock_ua = MockUserAgent->new;
+  $mock_ua->{_get_p_handler} = sub {
+    my ($self, $url, $headers) = @_;
+    push @MockUserAgent::REQUESTS, {method => 'GET', url => $url, headers => $headers};
+
+    if ($call_count++ == 0) {
+      # First call is LIST
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 200, body => $list_xml))
+      );
+    } else {
+      # Subsequent calls are GET for user.json files
+      for my $key (keys %user_data) {
+        if ($url =~ /\Q$key\E$/) {
+          return Mojo::Promise->resolve(
+            MockTransaction->new(res => MockResponse->new(code => 200, body => $user_data{$key}))
+          );
+        }
+      }
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 404))
+      );
+    }
+  };
+
+  no warnings 'redefine';
+  local *MockUserAgent::get_p = sub {
+    shift->{_get_p_handler}->(@_);
+  };
+  use warnings;
+
+  @MockUserAgent::REQUESTS = ();
+  $backend->{ua} = $mock_ua;
+  $call_count = 0;
+
+  my $users;
+  $backend->users_p->then(sub {
+    $users = shift;
+  })->$wait_success('users_p');
+
+  is scalar(@$users), 2, 'found 2 users';
+  is $users->[0]{email}, 'joe@example.com', 'first user is joe';
+  is $users->[1]{email}, 'jane@example.com', 'second user is jane';
+};
+
+# Test connections_p
+subtest 'connections_p' => sub {
+  # Create a mock user object
+  my $user = TestObject->new(email => 'joe@example.com');
+  $user->{_uri} = Mojo::Path->new('joe@example.com');
+  no warnings 'redefine';
+  local *TestObject::uri = sub { shift->{_uri} };
+  use warnings;
+
+  # Mock LIST response showing two connection directories
+  my $list_xml = <<'XML';
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <CommonPrefixes>
+    <Prefix>users/joe@example.com/irc-libera/</Prefix>
+  </CommonPrefixes>
+  <CommonPrefixes>
+    <Prefix>users/joe@example.com/irc-freenode/</Prefix>
+  </CommonPrefixes>
+</ListBucketResult>
+XML
+
+  # Mock GET responses for each connection.json file
+  my %connection_data = (
+    'users/joe@example.com/irc-libera/connection.json' => encode_json({
+      connection_id => 'irc-libera',
+      name => 'Libera Chat',
+    }),
+    'users/joe@example.com/irc-freenode/connection.json' => encode_json({
+      connection_id => 'irc-freenode',
+      name => 'Freenode',
+    }),
+  );
+
+  my $call_count = 0;
+  my $mock_ua = MockUserAgent->new;
+  $mock_ua->{_get_p_handler} = sub {
+    my ($self, $url, $headers) = @_;
+    push @MockUserAgent::REQUESTS, {method => 'GET', url => $url, headers => $headers};
+
+    if ($call_count++ == 0) {
+      # First call is LIST
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 200, body => $list_xml))
+      );
+    } else {
+      # Subsequent calls are GET for connection.json files
+      for my $key (keys %connection_data) {
+        if ($url =~ /\Q$key\E$/) {
+          return Mojo::Promise->resolve(
+            MockTransaction->new(res => MockResponse->new(code => 200, body => $connection_data{$key}))
+          );
+        }
+      }
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 404))
+      );
+    }
+  };
+
+  no warnings 'redefine';
+  local *MockUserAgent::get_p = sub {
+    shift->{_get_p_handler}->(@_);
+  };
+  use warnings;
+
+  @MockUserAgent::REQUESTS = ();
+  $backend->{ua} = $mock_ua;
+  $call_count = 0;
+
+  my $connections;
+  $backend->connections_p($user)->then(sub {
+    $connections = shift;
+  })->$wait_success('connections_p');
+
+  is scalar(@$connections), 2, 'found 2 connections';
+  is $connections->[0]{connection_id}, 'irc-libera', 'first connection is libera';
+  is $connections->[1]{connection_id}, 'irc-freenode', 'second connection is freenode';
+};
+
 done_testing;
