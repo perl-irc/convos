@@ -4,6 +4,7 @@ package Convos::Core::Backend::S3;
 use Mojo::Base 'Convos::Core::Backend::File', -async_await;
 
 use Convos::Util::S3 qw(sign_request);
+use Mojo::Collection;
 use Mojo::JSON qw(encode_json decode_json);
 use Mojo::UserAgent;
 use Mojo::URL;
@@ -111,6 +112,79 @@ async sub connections_p {
   }
 
   return \@connections;
+}
+
+async sub files_p {
+  my ($self, $user, $params) = @_;
+
+  # Build prefix for user's upload directory
+  my $prefix = sprintf 'users/%s/upload/', $user->email;
+
+  # List all files in the upload directory (no delimiter to get all keys)
+  my $result = await $self->_s3_list_p($prefix, '');
+
+  # Build a set of .data files for checking existence
+  my %data_files = map { $_ => 1 } grep { /\.data$/ } @{$result->{keys}};
+
+  # Find all .json files that have corresponding .data files
+  my @items;
+  for my $key (@{$result->{keys}}) {
+    next unless $key =~ m!/([^/]+)\.json$!;
+    my $id       = $1;
+    my $data_key = $key;
+    $data_key =~ s/\.json$/.data/;
+    next unless $data_files{$data_key};
+
+    # Load the metadata JSON
+    my $res = await $self->_s3_request_p('GET', $key);
+    next unless $res->is_success;
+
+    my $info = {};
+    eval { $info = decode_json($res->body); };
+    next unless $info && ref $info eq 'HASH';
+
+    push @items, {
+      id    => $id,
+      info  => $info,
+      saved => $info->{saved} || '',
+    };
+  }
+
+  # Sort by saved date descending, then by id
+  @items = sort { ($b->{saved} || '') cmp ($a->{saved} || '') || $a->{id} cmp $b->{id} } @items;
+
+  # Apply pagination
+  $params->{limit} = 60 if !$params->{limit} or $params->{limit} > 60;
+  my $res = {files => []};
+
+  my @before;
+  for my $item (@items) {
+    if ($params->{after} and $params->{after} eq $item->{id}) {
+      $res->{after} = $item->{id};
+    }
+    elsif (@{$res->{files}} >= $params->{limit}) {
+      $res->{next} = $item->{id};
+      last;
+    }
+    elsif (!$params->{after} or $res->{after}) {
+      push @{$res->{files}}, {
+        id    => $item->{id},
+        name  => $item->{info}{filename} || $item->{id},
+        saved => $item->{saved},
+        size  => $item->{info}{size} || 0,
+      };
+    }
+    else {
+      push @before, $item->{id};
+    }
+  }
+
+  if (@{$res->{files}} and @before > $params->{limit}) {
+    $res->{prev} = $before[-$params->{limit}];
+  }
+
+  $res->{files} = Mojo::Collection->new(@{$res->{files}});
+  return $res;
 }
 
 async sub _s3_list_p {
@@ -317,6 +391,17 @@ data hashes, sorted by registration date and email.
 Lists all connections for a user by querying S3 for connection directories
 within the user's path, then loading each connection.json file. Returns a
 promise that resolves to an arrayref of connection data hashes.
+
+=head2 files_p
+
+  $p = $backend->files_p($user, \%params);
+
+Lists uploaded files for a user by querying S3 for files in the user's
+upload directory. Each file consists of a C<.json> metadata file and a
+C<.data> content file. Returns a promise that resolves to a hashref
+containing a C<files> key with a L<Mojo::Collection> of file records.
+
+Pagination is supported via C<after> and C<limit> parameters.
 
 =head1 SEE ALSO
 

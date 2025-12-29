@@ -359,4 +359,170 @@ XML
   is $connections->[1]{connection_id}, 'irc-freenode', 'second connection is freenode';
 };
 
+# Test files_p
+subtest 'files_p' => sub {
+  # Create a mock user object with email
+  my $user = TestObject->new(email => 'joe@example.com');
+
+  # Mock LIST response showing upload files
+  my $list_xml = <<'XML';
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <Contents>
+    <Key>users/joe@example.com/upload/abc123.json</Key>
+  </Contents>
+  <Contents>
+    <Key>users/joe@example.com/upload/abc123.data</Key>
+  </Contents>
+  <Contents>
+    <Key>users/joe@example.com/upload/def456.json</Key>
+  </Contents>
+  <Contents>
+    <Key>users/joe@example.com/upload/def456.data</Key>
+  </Contents>
+  <Contents>
+    <Key>users/joe@example.com/upload/orphan.json</Key>
+  </Contents>
+</ListBucketResult>
+XML
+
+  # Mock GET responses for each metadata JSON file
+  my %file_data = (
+    'users/joe@example.com/upload/abc123.json' => encode_json({
+      filename => 'photo.jpg',
+      saved    => '2023-01-02T00:00:00Z',
+      size     => 1024,
+    }),
+    'users/joe@example.com/upload/def456.json' => encode_json({
+      filename => 'document.pdf',
+      saved    => '2023-01-01T00:00:00Z',
+      size     => 2048,
+    }),
+  );
+
+  my $call_count = 0;
+  my $mock_ua = MockUserAgent->new;
+  $mock_ua->{_get_p_handler} = sub {
+    my ($self, $url, $headers) = @_;
+    push @MockUserAgent::REQUESTS, {method => 'GET', url => $url, headers => $headers};
+
+    if ($call_count++ == 0) {
+      # First call is LIST
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 200, body => $list_xml))
+      );
+    } else {
+      # Subsequent calls are GET for file metadata
+      for my $key (keys %file_data) {
+        if ($url =~ /\Q$key\E$/) {
+          return Mojo::Promise->resolve(
+            MockTransaction->new(res => MockResponse->new(code => 200, body => $file_data{$key}))
+          );
+        }
+      }
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 404))
+      );
+    }
+  };
+
+  no warnings 'redefine';
+  local *MockUserAgent::get_p = sub {
+    shift->{_get_p_handler}->(@_);
+  };
+  use warnings;
+
+  @MockUserAgent::REQUESTS = ();
+  $backend->{ua} = $mock_ua;
+  $call_count = 0;
+
+  my $result;
+  $backend->files_p($user, {})->then(sub {
+    $result = shift;
+  })->$wait_success('files_p');
+
+  isa_ok $result->{files}, 'Mojo::Collection', 'files is a Mojo::Collection';
+  is $result->{files}->size, 2, 'found 2 files (orphan.json excluded - no .data file)';
+
+  # Files should be sorted by saved date descending
+  is $result->{files}[0]{id}, 'abc123', 'first file is abc123 (newer)';
+  is $result->{files}[0]{name}, 'photo.jpg', 'first file name is photo.jpg';
+  is $result->{files}[1]{id}, 'def456', 'second file is def456 (older)';
+  is $result->{files}[1]{name}, 'document.pdf', 'second file name is document.pdf';
+};
+
+# Test files_p with pagination
+subtest 'files_p with pagination' => sub {
+  my $user = TestObject->new(email => 'joe@example.com');
+
+  # Mock LIST response with many files for pagination testing
+  my @keys;
+  for my $i (1..5) {
+    push @keys, sprintf '<Key>users/joe@example.com/upload/file%03d.json</Key>', $i;
+    push @keys, sprintf '<Key>users/joe@example.com/upload/file%03d.data</Key>', $i;
+  }
+  my $list_xml = <<XML;
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult>
+  <Contents>
+    @{[join "\n  </Contents>\n  <Contents>\n    ", @keys]}
+  </Contents>
+</ListBucketResult>
+XML
+
+  # Create mock metadata for each file
+  my %file_data;
+  for my $i (1..5) {
+    my $key = sprintf 'users/joe@example.com/upload/file%03d.json', $i;
+    $file_data{$key} = encode_json({
+      filename => sprintf('file%03d.txt', $i),
+      saved    => sprintf('2023-01-%02dT00:00:00Z', 6 - $i),  # file001 is newest
+      size     => $i * 100,
+    });
+  }
+
+  my $call_count = 0;
+  my $mock_ua = MockUserAgent->new;
+  $mock_ua->{_get_p_handler} = sub {
+    my ($self, $url, $headers) = @_;
+    push @MockUserAgent::REQUESTS, {method => 'GET', url => $url, headers => $headers};
+
+    if ($call_count++ == 0) {
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 200, body => $list_xml))
+      );
+    } else {
+      for my $key (keys %file_data) {
+        if ($url =~ /\Q$key\E$/) {
+          return Mojo::Promise->resolve(
+            MockTransaction->new(res => MockResponse->new(code => 200, body => $file_data{$key}))
+          );
+        }
+      }
+      return Mojo::Promise->resolve(
+        MockTransaction->new(res => MockResponse->new(code => 404))
+      );
+    }
+  };
+
+  no warnings 'redefine';
+  local *MockUserAgent::get_p = sub {
+    shift->{_get_p_handler}->(@_);
+  };
+  use warnings;
+
+  @MockUserAgent::REQUESTS = ();
+  $backend->{ua} = $mock_ua;
+  $call_count = 0;
+
+  my $result;
+  $backend->files_p($user, {limit => 2})->then(sub {
+    $result = shift;
+  })->$wait_success('files_p with limit');
+
+  is $result->{files}->size, 2, 'limited to 2 files';
+  is $result->{files}[0]{id}, 'file001', 'first file is file001 (newest)';
+  ok $result->{next}, 'has next page indicator';
+};
+
 done_testing;
