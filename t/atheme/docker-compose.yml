@@ -1,0 +1,30 @@
+# ABOUTME: Docker Compose configuration for Atheme XMLRPC and IRC testing
+# ABOUTME: Start with 'docker-compose up -d', stop with 'docker-compose down'
+services:
+  ngircd:
+    image: ngircd/ngircd:latest
+    ports:
+      - "16667:6667"
+    volumes:
+      - ./ngircd.conf:/etc/ngircd/ngircd.conf:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "6667"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  atheme:
+    image: atheme/atheme:latest
+    depends_on:
+      ngircd:
+        condition: service_healthy
+    ports:
+      - "18080:8080"
+    volumes:
+      - ./atheme.conf:/etc/atheme/atheme.conf:ro
+    command: ["atheme-services", "-n", "-c", "/etc/atheme/atheme.conf"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/xmlrpc"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
