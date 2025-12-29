@@ -27,7 +27,9 @@ sub sign_request (%params) {
   my $payload_hash = sha256_hex($payload);
 
   # Build canonical headers (must be sorted)
+  # Auto-inject Host from URL if not provided
   my %canonical_headers = (
+    'host'                 => $url->host_port,
     %$headers,
     'x-amz-content-sha256' => $payload_hash,
     'x-amz-date'           => $date,
@@ -46,7 +48,7 @@ sub sign_request (%params) {
   if (my $query = $url->query) {
     my @pairs;
     for my $name (sort @{$query->names}) {
-      for my $value (@{$query->every_param($name)}) {
+      for my $value (sort @{$query->every_param($name)}) {
         push @pairs, url_escape($name) . '=' . url_escape($value // '');
       }
     }
@@ -100,3 +102,64 @@ sub _iso8601_now {
 }
 
 1;
+
+=encoding utf8
+
+=head1 NAME
+
+Convos::Util::S3 - AWS Signature Version 4 signing utility
+
+=head1 SYNOPSIS
+
+  use Convos::Util::S3 qw(sign_request);
+
+  my $headers = sign_request(
+    method  => 'PUT',
+    url     => 'https://bucket.s3.amazonaws.com/key',
+    headers => {'Content-Type' => 'application/json'},
+    payload => '{"data":"value"}',
+    key     => $access_key,
+    secret  => $secret_key,
+    region  => 'us-east-1',
+  );
+
+=head1 DESCRIPTION
+
+L<Convos::Util::S3> provides AWS Signature Version 4 signing for S3-compatible
+APIs including Tigris, AWS S3, and others.
+
+=head1 FUNCTIONS
+
+=head2 sign_request
+
+  \%headers = sign_request(%params);
+
+Signs an HTTP request for S3-compatible APIs. Parameters:
+
+=over 4
+
+=item * method - HTTP method (GET, PUT, DELETE, etc.)
+
+=item * url - Full URL including bucket and key
+
+=item * headers - Optional hashref of additional headers
+
+=item * payload - Request body (empty string for GET)
+
+=item * key - Access key ID
+
+=item * secret - Secret access key
+
+=item * region - AWS region or 'auto' for Tigris
+
+=item * date - Optional ISO8601 date (for testing)
+
+=back
+
+Returns hashref with Authorization, x-amz-date, and x-amz-content-sha256 headers.
+
+=head1 SEE ALSO
+
+L<Convos>.
+
+=cut
