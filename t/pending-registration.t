@@ -2,7 +2,7 @@
 use lib '.';
 use t::Helper;
 use Convos::Core;
-use Convos::Core::PendingRegistration;
+use Convos::Plugin::Auth::Atheme::PendingRegistration;
 
 t::Helper->subprocess_in_main_process;
 
@@ -10,7 +10,7 @@ my $core = Convos::Core->new(backend => 'Convos::Core::Backend::File');
 my $backend = $core->backend;
 
 subtest 'new with required attributes' => sub {
-  my $pr = Convos::Core::PendingRegistration->new(
+  my $pr = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'test-session-123',
     nick       => 'testuser',
@@ -27,7 +27,7 @@ subtest 'new with required attributes' => sub {
 };
 
 subtest 'uri' => sub {
-  my $pr = Convos::Core::PendingRegistration->new(
+  my $pr = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'test-session-123',
     nick       => 'testuser',
@@ -40,7 +40,7 @@ subtest 'uri' => sub {
 };
 
 subtest 'TO_JSON' => sub {
-  my $pr = Convos::Core::PendingRegistration->new(
+  my $pr = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'test-session-123',
     nick       => 'testuser',
@@ -58,7 +58,7 @@ subtest 'TO_JSON' => sub {
 };
 
 subtest 'save_p and load_p' => sub {
-  my $pr = Convos::Core::PendingRegistration->new(
+  my $pr = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'test-session-456',
     nick       => 'savetest',
@@ -70,7 +70,7 @@ subtest 'save_p and load_p' => sub {
   is $saved, $pr, 'save_p returns object';
 
   my $loaded;
-  my $pr2 = Convos::Core::PendingRegistration->new(
+  my $pr2 = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'test-session-456',
     nick       => 'placeholder',
@@ -83,7 +83,7 @@ subtest 'save_p and load_p' => sub {
 };
 
 subtest 'load_p with expiration check' => sub {
-  my $pr = Convos::Core::PendingRegistration->new(
+  my $pr = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'expired-session',
     nick       => 'expireduser',
@@ -97,7 +97,7 @@ subtest 'load_p with expiration check' => sub {
   $pr->save_p->then(sub { $saved = shift })->$wait_success('save_p expired');
   is $saved, $pr, 'expired pending registration saved';
 
-  my $pr2 = Convos::Core::PendingRegistration->new(
+  my $pr2 = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'expired-session',
     nick       => 'placeholder',
@@ -111,7 +111,7 @@ subtest 'load_p with expiration check' => sub {
 };
 
 subtest 'delete_p' => sub {
-  my $pr = Convos::Core::PendingRegistration->new(
+  my $pr = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'delete-test',
     nick       => 'deleteuser',
@@ -126,7 +126,7 @@ subtest 'delete_p' => sub {
   $pr->delete_p->then(sub { $deleted = shift })->$wait_success('delete_p');
   is $deleted, $pr, 'delete_p returns object';
 
-  my $pr2 = Convos::Core::PendingRegistration->new(
+  my $pr2 = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => 'delete-test',
     nick       => 'placeholder',

@@ -432,7 +432,7 @@ SKIP: {
     my $verify_nick = 'verifytest' . time() . int(rand(1000));
 
     # Create a mock pending registration in backend
-    my $pending = Convos::Core::PendingRegistration->new(
+    my $pending = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
       core       => $app->core,
       session_id => $c->session->id,
       nick       => $verify_nick,

@@ -3,7 +3,7 @@
 package Convos::Plugin::Auth::Atheme::Registration;
 use Mojo::Base 'Convos::Plugin', -async_await;
 
-use Convos::Core::PendingRegistration;
+use Convos::Plugin::Auth::Atheme::PendingRegistration;
 use Mojo::IOLoop;
 use Mojo::Promise;
 use Mojo::URL;
@@ -112,7 +112,7 @@ async sub _register_p {
   my $core = $c->app->core;
   my $session_id = $c->session->id;
 
-  my $pending = Convos::Core::PendingRegistration->new(
+  my $pending = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => $session_id,
     nick       => $nick,
@@ -143,7 +143,7 @@ async sub _verify_p {
 
   # Load pending registration for this session
   my $core = $c->app->core;
-  my $pending = Convos::Core::PendingRegistration->new(
+  my $pending = Convos::Plugin::Auth::Atheme::PendingRegistration->new(
     core       => $core,
     session_id => $session_id,
     nick       => 'placeholder',  # Will be loaded

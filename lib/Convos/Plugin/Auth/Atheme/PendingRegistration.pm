@@ -1,6 +1,6 @@
 # ABOUTME: PendingRegistration stores temporary registration data until verification
 # ABOUTME: Used to track IRC nick registrations pending email verification
-package Convos::Core::PendingRegistration;
+package Convos::Plugin::Auth::Atheme::PendingRegistration;
 use Mojo::Base 'Mojo::EventEmitter';
 
 use Convos::Util qw(logf);
@@ -89,11 +89,11 @@ sub _normalize_attributes {
 
 =head1 NAME
 
-Convos::Core::PendingRegistration - Temporary storage for pending registrations
+Convos::Plugin::Auth::Atheme::PendingRegistration - Temporary storage for pending registrations
 
 =head1 DESCRIPTION
 
-L<Convos::Core::PendingRegistration> is a class used to store pending IRC nick
+L<Convos::Plugin::Auth::Atheme::PendingRegistration> is a class used to store pending IRC nick
 registrations awaiting verification.
 
 =head1 ATTRIBUTES
@@ -144,7 +144,7 @@ L<Mojo::Date> object for when the registration expires.
 
 =head2 new
 
-  $pr = Convos::Core::PendingRegistration->new(\%attributes);
+  $pr = Convos::Plugin::Auth::Atheme::PendingRegistration->new(\%attributes);
 
 Used to construct a new object.
 
@@ -179,6 +179,6 @@ See L<Convos::Core::Backend/delete_object> for details.
 
 =head1 SEE ALSO
 
-L<Convos::Core>.
+L<Convos::Plugin::Auth::Atheme>.
 
 =cut
