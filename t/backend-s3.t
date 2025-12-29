@@ -45,7 +45,7 @@ t::Helper->subprocess_in_main_process;
   has 'code';
   has 'body' => '';
 
-  sub is_success { shift->code >= 200 && shift->code < 300 }
+  sub is_success { my $self = shift; $self->code >= 200 && $self->code < 300 }
 }
 
 # Mock the object with uri() method
@@ -202,7 +202,7 @@ XML
   is scalar(@{$result->{prefixes}}), 2, 'found 2 prefixes';
   is $result->{keys}[0], 'users/joe@example.com/user.json', 'first key correct';
   is $result->{prefixes}[0], 'users/joe@example.com/', 'first prefix correct';
-  like $MockUserAgent::REQUESTS[0]{url}, qr{\?prefix=users/&delimiter=/}, 'URL has query params';
+  like $MockUserAgent::REQUESTS[0]{url}, qr{\?prefix=users(%2F|/)&delimiter=(%2F|/)}, 'URL has query params';
 };
 
 # Test users_p
