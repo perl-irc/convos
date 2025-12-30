@@ -39,7 +39,7 @@ async sub load_object_p {
 
   my $data = {};
   eval { $data = decode_json($res->body); };
-  return Mojo::Promise->reject($@ || 'Invalid JSON from S3') unless $data;
+  die($@ || 'Invalid JSON from S3') unless $data;
 
   return $data;
 }
